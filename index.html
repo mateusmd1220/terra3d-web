@@ -1,0 +1,282 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
+  <meta name="color-scheme" content="dark" />
+  <meta name="format-detection" content="telephone=no" />
+  <title>Terra 3D</title>
+  <link rel="icon" type="image/png" href="icons/icon-192.png" />
+  <!-- PWA (versão web): instalação na tela de início -->
+  <link rel="manifest" href="manifest.webmanifest" />
+  <meta name="theme-color" content="#000000" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="Terra 3D" />
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png" />
+  <script>
+    // Mostra erros de JavaScript na tela (sem Mac não há como inspecionar a WebView do iPhone).
+    (function () {
+      var shown = 0;
+      function show(msg) {
+        if (shown++ > 4) return;
+        var box = document.getElementById('jsErrors');
+        if (!box) {
+          box = document.createElement('div');
+          box.id = 'jsErrors';
+          box.style.cssText = 'position:fixed;left:8px;right:8px;top:calc(env(safe-area-inset-top,0px) + 56px);z-index:99;' +
+            'background:rgba(120,0,20,.92);color:#fff;font:12px/1.4 ui-monospace,monospace;padding:10px 12px;border-radius:10px;' +
+            'white-space:pre-wrap;max-height:40vh;overflow:auto';
+          box.onclick = function () { box.remove(); shown = 0; };
+          (document.body || document.documentElement).appendChild(box);
+        }
+        box.textContent += (box.textContent ? '\n\n' : 'Erro no app (toque para fechar):\n') + msg;
+      }
+      window.addEventListener('error', function (e) {
+        show((e.message || 'erro') + (e.filename ? '\n' + e.filename.split('/').slice(-2).join('/') + ':' + e.lineno : ''));
+      });
+      window.addEventListener('unhandledrejection', function (e) {
+        var r = e.reason; show('Promise: ' + (r && (r.stack || r.message) || r));
+      });
+    })();
+  </script>
+  <link rel="stylesheet" href="vendor/cesium/Widgets/widgets.css" />
+  <link rel="stylesheet" href="css/app.css" />
+  <script>window.CESIUM_BASE_URL = new URL('vendor/cesium/', location.href).href;</script>
+  <script src="vendor/cesium/Cesium.js"></script>
+</head>
+<body>
+<div id="app">
+  <div id="views">
+    <div id="viewMain" class="view"></div>
+    <div id="viewSplit" class="view hidden"></div>
+    <div id="splitTagL" class="split-tag hidden"></div>
+    <div id="splitTagR" class="split-tag right hidden"></div>
+  </div>
+
+  <!-- Barra superior -->
+  <header id="topbar">
+    <button id="btnSidebar" class="icon-btn" title="Mostrar/ocultar painel (H)">☰</button>
+    <div class="brand">TERRA<b>3D</b><small>relevo &amp; batimetria</small></div>
+    <div id="search">
+      <span class="search-ico">⌕</span>
+      <button id="searchClear" class="search-clear hidden" title="Limpar busca e destaque (Esc)">✕</button>
+      <input id="searchInput" type="search" autocomplete="off" spellcheck="false"
+             placeholder="Buscar: Everest, San Andreas, Fossa das Marianas, São Paulo…" />
+      <div id="searchResults" class="hidden"></div>
+    </div>
+    <div id="hudExag" title="Exagero vertical atual"><span id="hudExagValue">1×</span><small>exagero vertical</small></div>
+  </header>
+
+  <!-- Painel lateral -->
+  <aside id="sidebar">
+    <section class="card" id="secBase">
+      <h3>Mapa base</h3>
+      <div class="base-modes" id="baseModes">
+        <button class="base-card on" data-v="relief" title="Relevo hipsométrico com paletas (estilo do vídeo)"><i class="thumb relief"></i><span>Relevo</span></button>
+        <button class="base-card" data-v="satellite" title="Imagem de satélite (estilo Google Earth)"><i class="thumb satellite"></i><span>Satélite</span></button>
+        <button class="base-card" data-v="standard" title="Mapa padrão: vegetação, água, terra (estilo Google Maps)"><i class="thumb standard"></i><span>Padrão</span></button>
+      </div>
+      <label class="field" id="reliefOnly">Paleta <select id="palette"></select></label>
+    </section>
+
+    <section class="card collapsible" id="secLayers2">
+      <h3>Camadas</h3>
+      <div class="body">
+        <label class="check"><input type="checkbox" id="bdOn" /> Divisão territorial</label>
+        <div class="sub-checks">
+          <label class="check"><input type="checkbox" id="bd_countries" /> Países</label>
+          <label class="check"><input type="checkbox" id="bd_states" /> Estados / províncias</label>
+          <label class="check" title="Aparecem apenas ao aproximar (câmera abaixo de ~500 km)"><input type="checkbox" id="bd_municipalities" /> Municípios (Brasil)</label>
+        </div>
+        <label class="check" title="Nomes de países, estados e cidades; a densidade se ajusta ao zoom"><input type="checkbox" id="placesOn" checked /> Lugares</label>
+        <label class="check"><input type="checkbox" id="coastLine" /> Destacar linha de costa simulada</label>
+        <label class="check" id="overlayShadeRow"><input type="checkbox" id="overlayShade" checked /> Sombreamento do relevo sobre o mapa</label>
+        <div id="overlayToggles"></div>
+        <label class="check"><input type="checkbox" id="poisOn" checked /> Pontos de interesse</label>
+      </div>
+    </section>
+
+    <section class="card" id="secExag">
+      <h3>Exagero vertical</h3>
+      <div class="big-value"><span id="exagValue">1×</span></div>
+      <input id="exagSlider" type="range" min="0" max="1000" value="0" />
+      <div class="chips" id="exagChips"></div>
+      <label class="check"><input type="checkbox" id="exagSmooth" checked /> Transição animada</label>
+      <label class="check" title="Perto da superfície, a câmera sobe/desce junto com o relevo esticado para não ficar enterrada entre os picos"><input type="checkbox" id="camFollow" checked /> Câmera acompanha o relevo</label>
+      <p class="hint" id="exagHint"></p>
+    </section>
+
+    <section class="card collapsible" id="secSea">
+      <h3>Nível do mar &amp; cenários <span class="badge" id="seaBadge">0 m</span></h3>
+      <div class="body">
+        <div class="row">
+          <input id="seaSlider" type="range" min="-1000" max="1000" value="0" />
+          <input id="seaInput" type="number" step="1" value="0" class="num" />
+        </div>
+        <div class="chips" id="seaChips"></div>
+        <p class="hint" id="seaInfo">Baseado na elevação <b>real</b> — independe do exagero vertical.</p>
+        <div class="seg" id="waterMode">
+          <button data-v="none" class="on" title="Fundo do oceano exposto, como no vídeo">Planeta sem água</button>
+          <button data-v="tint" title="Áreas abaixo do nível simulado recebem cor de água">Água translúcida</button>
+        </div>
+        <label class="check"><input type="checkbox" id="flatSea" /> Superfície da água plana em 3D</label>
+      </div>
+    </section>
+
+    <section class="card collapsible" id="secStyle">
+      <h3>Estilo do terreno</h3>
+      <div class="body">
+        <label class="field">Sombreamento <input id="hillshade" type="range" min="0" max="150" value="85" /></label>
+        <label class="field">Realce do relevo <input id="zFactor" type="range" min="10" max="600" value="150" /></label>
+        <label class="field">Direção da luz <input id="sunAz" type="range" min="0" max="359" value="315" /></label>
+        <label class="field">Altura do sol <input id="sunAlt" type="range" min="10" max="80" value="40" /></label>
+        <label class="check"><input type="checkbox" id="multiLight" checked /> Iluminação multidirecional</label>
+        <label class="check"><input type="checkbox" id="followExag" /> Sombreamento acompanha o exagero</label>
+        <label class="check" title="Brilho azul da atmosfera ao redor do planeta"><input type="checkbox" id="atmoOn" /> Atmosfera</label>
+        <label class="check" title="Posição real do Sol: o lado escuro do planeta mostra as luzes das cidades (NASA Black Marble)"><input type="checkbox" id="dayNightOn" /> Dia / noite com luzes das cidades</label>
+        <label class="field sub" id="dnTimeRow">Horário <input id="dnHour" type="range" min="-12" max="12" step="0.25" value="0" /></label>
+        <p class="hint" id="dnTimeLabel"></p>
+        <label class="field">Isolinhas
+          <select id="contour">
+            <option value="0">desligadas</option><option value="50">50 m</option><option value="100">100 m</option>
+            <option value="250">250 m</option><option value="500">500 m</option><option value="1000">1.000 m</option><option value="2000">2.000 m</option>
+          </select>
+        </label>
+        <label class="check"><input type="checkbox" id="bandOn" /> Destacar faixa de altitude</label>
+        <div class="row band-row">
+          <input id="bandMin" type="number" class="num" value="3000" step="100" title="mínimo (m)" />
+          <span>a</span>
+          <input id="bandMax" type="number" class="num" value="9000" step="100" title="máximo (m)" />
+          <span>m</span>
+        </div>
+        <div class="chips" id="bandChips"></div>
+      </div>
+    </section>
+
+    <section class="card collapsible collapsed" id="secLayers">
+      <h3>Dados &amp; fontes</h3>
+      <div class="body">
+        <label class="field">Fonte do terreno
+          <select id="terrainSource">
+            <option value="terrarium">AWS Terrain Tiles (global, terra + batimetria)</option>
+            <option value="ion" disabled>Cesium World Terrain + Bathymetry (token)</option>
+          </select>
+        </label>
+        <div class="subcard">
+          <h4>DEM de alta resolução (OpenTopography)</h4>
+          <div class="row">
+            <select id="otDataset"></select>
+            <button id="otLoad" class="btn">Carregar na vista</button>
+          </div>
+          <p class="hint" id="otStatus">Verificando configuração…</p>
+          <ul id="patchList" class="list"></ul>
+        </div>
+      </div>
+    </section>
+
+    <section class="card collapsible collapsed" id="secTools">
+      <h3>Ferramentas</h3>
+      <div class="body tools">
+        <button class="btn wide" id="toolProfile">📈 Perfil topográfico (A → B)</button>
+        <button class="btn wide" id="toolStats">📊 Estatísticas da vista atual</button>
+        <button class="btn wide" id="toolCompare">⚖️ Comparar regiões</button>
+        <div class="row">
+          <label class="check"><input type="checkbox" id="splitOn" /> Tela dividida</label>
+          <select id="splitExag" title="Exagero da vista da direita">
+            <option value="1">direita: 1× (real)</option><option value="5">direita: 5×</option>
+            <option value="10">direita: 10×</option><option value="50">direita: 50×</option>
+          </select>
+        </div>
+        <button class="btn wide" id="toolShot">📷 Capturar imagem</button>
+        <button class="btn wide" id="toolLink">🔗 Copiar link desta vista</button>
+      </div>
+    </section>
+
+    <section class="card collapsible collapsed" id="secScale">
+      <h3>Entendendo a escala</h3>
+      <div class="body" id="scaleBody"></div>
+    </section>
+
+    <section class="card collapsible collapsed" id="secPlaces">
+      <h3>Lugares para explorar</h3>
+      <div class="body" id="placeList"></div>
+    </section>
+
+    <footer class="side-foot">
+      <button class="linklike" id="btnHelp">Controles &amp; atalhos</button> ·
+      <button class="linklike" id="btnAbout">Fontes de dados</button>
+    </footer>
+  </aside>
+
+  <!-- Navegação -->
+  <nav id="navbar">
+    <button class="nav-btn" id="navQuick" title="Ajustes rápidos: exagero, nível do mar e horário">🎚️</button>
+    <button class="nav-btn" id="navGlobal" title="Visão global (G)">🌍</button>
+    <button class="nav-btn" id="navTop" title="Olhar de cima (T)">⤓</button>
+    <button class="nav-btn" id="navOblique" title="Vista oblíqua / horizonte (O)">◢</button>
+    <button class="nav-btn" id="navTiltUp" title="Inclinar mais (PgUp)">⤴</button>
+    <button class="nav-btn" id="navTiltDown" title="Inclinar menos (PgDn)">⤵</button>
+    <button class="nav-btn" id="navNorth" title="Norte para cima (N)"><span id="compass">N</span></button>
+    <button class="nav-btn" id="navZoomIn" title="Aproximar (+)">＋</button>
+    <button class="nav-btn" id="navZoomOut" title="Afastar (−)">－</button>
+    <button class="nav-btn" id="navOrbit" title="Orbitar ponto central / girar globo (R)">⟳</button>
+    <button class="nav-btn" id="navReset" title="Vista inicial (Home)">⌂</button>
+  </nav>
+
+  <!-- Ajustes rápidos (as mesmas barras da lateral, sempre sincronizadas) -->
+  <div id="quick" class="hidden">
+    <div class="q-row"><span class="q-k">Exagero</span><input id="qExag" type="range" min="0" max="1000" value="0" /><span class="q-v" id="qExagV"></span></div>
+    <div class="q-row"><span class="q-k">Nível do mar</span><input id="qSea" type="range" min="-1000" max="1000" value="0" /><span class="q-v" id="qSeaV"></span></div>
+    <div class="q-row" id="qHourRow"><span class="q-k">Horário</span><input id="qHour" type="range" min="-12" max="12" step="0.25" value="0" /><button class="q-v" id="qHourV" title="Voltar para agora"></button></div>
+  </div>
+
+  <!-- Leitura sob o cursor -->
+  <div id="readout" class="hidden"></div>
+
+  <!-- Legenda -->
+  <div id="legend"><canvas id="legendCanvas" width="24" height="220"></canvas><div id="legendLabels"></div><div class="legend-title">elevação real</div></div>
+
+  <!-- Status -->
+  <div id="status"><span id="camAlt"></span><span id="loading" class="hidden">carregando relevo…</span></div>
+
+  <!-- Painel de perfil -->
+  <section id="profilePanel" class="panel bottom hidden">
+    <div class="panel-head">
+      <h3>Perfil topográfico</h3>
+      <span class="hint" id="profileHint">Clique no globo para adicionar pontos. Duplo-clique ou “Concluir” para gerar.</span>
+      <div class="spacer"></div>
+      <div class="seg small" id="profileMode">
+        <button data-v="fit" class="on">Ajustado</button>
+        <button data-v="scale">Proporção real × exagero</button>
+      </div>
+      <button class="btn" id="profileDone">Concluir</button>
+      <button class="btn" id="profileNew">Novo</button>
+      <button class="icon-btn" id="profileClose" title="Fechar">✕</button>
+    </div>
+    <div class="profile-body">
+      <canvas id="profileCanvas"></canvas>
+      <div id="profileStats" class="stats-grid"></div>
+    </div>
+  </section>
+
+  <!-- Painel de análise (estatísticas / comparação) -->
+  <section id="analysisPanel" class="panel right hidden">
+    <div class="panel-head">
+      <h3 id="analysisTitle">Estatísticas</h3>
+      <div class="spacer"></div>
+      <button class="icon-btn" id="analysisClose" title="Fechar">✕</button>
+    </div>
+    <div id="analysisBody"></div>
+  </section>
+
+  <!-- Modal -->
+  <div id="modal" class="hidden"><div class="modal-card"><button class="icon-btn modal-close" id="modalClose">✕</button><div id="modalBody"></div></div></div>
+
+  <div id="toast" class="hidden"></div>
+  <div id="credits"></div>
+</div>
+<script type="module" src="js/main.js"></script>
+</body>
+</html>
